@@ -1,16 +1,14 @@
-name: 每日AI早报推送
+name: 每日AI早报推送（图片来源）
 on:
   schedule:
-    # Beijing time 8:00 = UTC 0:00
     - cron: '0 0 * * *'
-  workflow_dispatch:  # Manual trigger
-  # Also run when the repo is pushed to (for testing)
+  workflow_dispatch:
   push:
     branches: [main]
 
 jobs:
   fetch-and-push:
-    name: 搜索新闻并推送到微信
+    name: 生图并推送微信
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -18,7 +16,11 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 运行新闻采集脚本
+      - name: 安装依赖
+        run: pip3 install Pillow
+
+      - name: 采集新闻并推送
         run: python3 scripts/fetch_and_push.py
         env:
           SENDKEY: ${{ secrets.SENDKEY }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
