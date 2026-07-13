@@ -179,85 +179,48 @@ def collect_news() -> dict:
 
 
 # ── Markdown Formatting ────────────────────────────────────────
-def build_markdown(all_news: dict) -> tuple[str, str]:
-    """Build title and markdown body for WeChat push."""
+SITE_URL = "https://c5cc7d27723044f5aef17214f4055d1c.app.codebuddy.work"
 
-    # Highlights
+
+def build_markdown(all_news: dict) -> tuple[str, str]:
+    """Build compact title and body optimized for WeChat card preview."""
+
+    # Collect headlines from all categories
     highlights = []
+    total_count = 0
     for category, items in all_news.items():
-        if items:
-            title = items[0]["title"]
-            # Truncate for highlights
-            if len(title) > 30:
-                title = title[:28] + "…"
+        total_count += len(items)
+        for item in items[:3]:  # top 3 from each
+            title = item["title"]
+            if len(title) > 35:
+                title = title[:33] + "…"
             highlights.append(title)
 
-    if len(highlights) < 3:
-        # Add from other categories
-        for category, items in all_news.items():
-            if len(highlights) >= 3:
-                break
-            for item in items[1:]:
-                if len(highlights) >= 3:
-                    break
-                title = item["title"]
-                if len(title) > 30:
-                    title = title[:28] + "…"
-                highlights.append(title)
+    # Keep top 6 highlights max
+    highlights = highlights[:6]
+
+    # Count per category for the summary line
+    ai_count = len(all_news.get("ai", []))
+    robot_count = len(all_news.get("robot", []))
+    finance_count = len(all_news.get("finance", []))
 
     title = f"AI早报 · {DATE_LABEL}"
 
-    lines = [f"# 今日要点\n"]
-    for h in highlights[:3]:
-        lines.append(f"- {h}")
-
-    # Category sections
-    category_names = {
-        "ai": "AI领袖动态",
-        "robot": "机器人全赛道",
-        "finance": "泛金融新闻",
-    }
-
-    for category, display_name in category_names.items():
-        items = all_news.get(category, [])
-        if not items:
-            continue
-
-        lines.append("")
-        lines.append("---")
-        lines.append("")
-        lines.append(f"# {display_name}")
-        lines.append("")
-
-        for idx, item in enumerate(items, 1):
-            title_text = item["title"]
-            desc = item["description"][:200] if item["description"] else ""
-            source_text = item["source"] if item["source"] else "Google News"
-            time_text = format_pub_date(item["pubDate"])
-
-            lines.append(f"## {idx}. {title_text}")
-            lines.append("")
-            if desc:
-                lines.append(f"{desc}")
-                lines.append("")
-            source_line = f"来源：{source_text}"
-            if time_text:
-                source_line += f" · {time_text}"
-            lines.append(f"*{source_line}*")
-            lines.append("")
-
-    # Footer
-    lines.append("---")
+    lines = []
+    lines.append(f"AI领袖({ai_count}条) | 机器人({robot_count}条) | 泛金融({finance_count}条)")
+    lines.append("━" * 22)
     lines.append("")
-    lines.append(
-        f"🤖 由 GitHub Actions 自动生成 · {DATE_LABEL} {WEEKDAY}"
-    )
+
+    for h in highlights:
+        lines.append(f"▸ {h}")
+
     lines.append("")
-    lines.append(
-        "📱 完整版含播客音频，请访问本地 AI早报应用"
-    )
+    lines.append("━" * 22)
     lines.append("")
-    lines.append("— Eric的AI每日早报 —")
+    lines.append(f"👉 点击查看完整早报（共{total_count}条新闻）")
+    lines.append(SITE_URL)
+    lines.append("")
+    lines.append(f"每天早上8:00自动更新  ·  Eric的私人早报")
 
     body = "\n".join(lines)
     return title, body
@@ -265,11 +228,12 @@ def build_markdown(all_news: dict) -> tuple[str, str]:
 
 # ── Push ───────────────────────────────────────────────────────
 def push_to_wechat(title: str, content: str) -> dict:
-    """Send to ServerChan."""
+    """Send to ServerChan with short parameter for cleaner push."""
     url = f"https://sctapi.ftqq.com/{SENDKEY}.send"
     data = urllib.parse.urlencode({
         "title": title,
         "desp": content,
+        "short": content.split("\n")[0][:80],  # First line as short summary
     }).encode("utf-8")
 
     req = urllib.request.Request(
