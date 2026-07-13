@@ -10,10 +10,20 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 import json
 import os
+import base64
+import sys
 import re
 import textwrap
 from datetime import datetime, timezone, timedelta
 from html import unescape
+
+# Add repo root to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))) or ".")
+try:
+    from scripts.generate_image import generate_image
+    HAS_IMAGE = True
+except ImportError:
+    HAS_IMAGE = False
 
 # ── Configuration ──────────────────────────────────────────────
 SENDKEY = os.environ.get("SENDKEY", "")
@@ -227,14 +237,19 @@ def build_markdown(all_news: dict) -> tuple[str, str]:
 
 
 # ── Push ───────────────────────────────────────────────────────
-def push_to_wechat(title: str, content: str) -> dict:
-    """Send to ServerChan with short parameter for cleaner push."""
+def push_to_wechat(title: str, content: str, image_url: str = "") -> dict:
+    """Send to ServerChan with optional image."""
     url = f"https://sctapi.ftqq.com/{SENDKEY}.send"
-    data = urllib.parse.urlencode({
+    params = {
         "title": title,
         "desp": content,
-        "short": content.split("\n")[0][:80],  # First line as short summary
-    }).encode("utf-8")
+        "short": content.split("\n")[0][:80],
+    }
+    if image_url:
+        # Embed image in markdown
+        params["desp"] = f"![早报]({image_url})\n\n{content}"
+
+    data = urllib.parse.urlencode(params).encode("utf-8")
 
     req = urllib.request.Request(
         url,
@@ -252,6 +267,63 @@ def push_to_wechat(title: str, content: str) -> dict:
 
 
 # ── Main ───────────────────────────────────────────────────────
+def upload_to_github(file_path: str, repo_path: str) -> str:
+    """Upload file to GitHub repo, return raw URL."""
+    TOKEN = os.environ.get("GITHUB_TOKEN", "")
+    if not TOKEN:
+        print("⚠️ No GITHUB_TOKEN, skipping upload")
+        return ""
+
+    REPO = "ziyanggao202-ui/ai-morning-brief"
+    API = f"https://api.github.com/repos/{REPO}/contents/{repo_path}"
+
+    with open(file_path, "rb") as f:
+        content_b64 = base64.b64encode(f.read()).decode()
+
+    # Check if file exists to get SHA
+    try:
+        req = urllib.request.Request(
+            API,
+            headers={
+                "Authorization": f"token {TOKEN}",
+                "Accept": "application/vnd.github.v3+json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            existing = json.loads(resp.read().decode())
+            sha = existing.get("sha", "")
+    except Exception:
+        sha = ""
+
+    # Upload
+    data = json.dumps({
+        "message": f"Update {repo_path} [{NOW.strftime('%Y-%m-%d')}]",
+        "content": content_b64,
+        "sha": sha or None,
+        "branch": "main",
+    }).encode()
+
+    req = urllib.request.Request(
+        API, data=data,
+        headers={
+            "Authorization": f"token {TOKEN}",
+            "Accept": "application/vnd.github.v3+json",
+            "Content-Type": "application/json",
+        },
+        method="PUT",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode())
+            raw_url = f"https://raw.githubusercontent.com/{REPO}/main/{repo_path}"
+            print(f"✅ Uploaded: {raw_url}")
+            return raw_url
+    except Exception as e:
+        print(f"❌ Upload failed: {e}")
+        return ""
+
+
 def main():
     print(f"🚀 AI Morning Brief · {DATE_LABEL} {WEEKDAY}")
     print(f"⏰ Started at {NOW.strftime('%H:%M:%S')}")
@@ -283,9 +355,26 @@ def main():
         print(f"   Body length: {len(body)} chars")
         print()
 
+    # Step 2.5: Generate and upload image
+    image_url = ""
+    if HAS_IMAGE and total > 0:
+        try:
+            print("🖼️  Step 2.5: Generating image...")
+            img_path = "/tmp/daily-brief.png"
+            date_str = f"{DATE_LABEL} {WEEKDAY}"
+            generate_image(all_news, img_path, date_str)
+            print("📤 Uploading image to GitHub...")
+            image_url = upload_to_github(img_path, "daily-brief.png")
+            if image_url:
+                print(f"   URL: {image_url}")
+            print()
+        except Exception as e:
+            print(f"⚠️  Image generation skipped: {e}")
+            print()
+
     # Step 3: Push
     print(f"📱 Step 3: Pushing to WeChat...")
-    result = push_to_wechat(title, body)
+    result = push_to_wechat(title, body, image_url)
 
     if result.get("code") == 0:
         print(f"✅ Push successful! Message ID: {result.get('message_id', 'N/A')}")
